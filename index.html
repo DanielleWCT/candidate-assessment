@@ -1840,25 +1840,48 @@ if (typeof module !== "undefined") {
   function esc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 
   function buildEmailReportHtml(reportData) {
-    const { z, effTier, band, validity, strengths, derailers } = reportData;
+    const { z, effTier, band, validity, strengths, derailers, traitById, rankedTraits } = reportData;
     const score = reportData.score;
     const bandColor = band === "Ready Now" ? "#00BFA6" : band === "Ready with Onboarding Support" ? "#FFB236" : "#FF6B6B";
     const famLabel = FAMILIES[state.setup.familyKey] ? FAMILIES[state.setup.familyKey].label : "";
-    const tierLabel = TIERS[effTier] ? TIERS[effTier].label : "";
+    const tierLabel = TIERS[state.setup.tierKey] ? TIERS[state.setup.tierKey].label : "";
+    const effTierLabel = TIERS[effTier] ? TIERS[effTier].label : tierLabel;
+    const contextLabel = CONTEXTS[state.setup.contextKey] ? CONTEXTS[state.setup.contextKey].label : "";
 
     function infoRows(pairs) {
       return pairs.map(([k, v]) => (
-        `<tr><td style="padding:6px 10px;font-weight:bold;background:#f2f2f2;border:1px solid #e0e0e0;width:200px;">${esc(k)}</td>` +
+        `<tr><td style="padding:6px 10px;font-weight:bold;background:#f2f2f2;border:1px solid #e0e0e0;width:220px;">${esc(k)}</td>` +
         `<td style="padding:6px 10px;border:1px solid #e0e0e0;">${esc(v)}</td></tr>`
       )).join("");
     }
-    function sectionTitle(t) {
-      return `<h3 style="color:#1F3864;font-size:15px;margin:20px 0 8px;border-bottom:2px solid #B08D57;padding-bottom:4px;">${esc(t)}</h3>`;
+    function sectionTitle(n, t) {
+      return `<h2 style="color:#1F3864;font-size:17px;margin:26px 0 8px;border-bottom:2px solid #B08D57;padding-bottom:5px;">${esc(n + ". " + t)}</h2>`;
+    }
+    function subTitle(t) {
+      return `<h3 style="color:#5F3DDB;font-size:14px;margin:16px 0 6px;">${esc(t)}</h3>`;
+    }
+    // A "bar" built from a nested table's cell widths — this renders reliably even
+    // in email clients with poor CSS support (incl. Outlook desktop), unlike a
+    // flex/grid or absolutely-positioned bar.
+    function soloBar(pct, color) {
+      const p = Math.max(0, Math.min(100, pct));
+      return `<table style="border-collapse:collapse;width:100%;"><tr>` +
+        `<td style="background:${color};height:10px;width:${p.toFixed(0)}%;font-size:1px;line-height:1px;">&nbsp;</td>` +
+        `<td style="background:#eee;height:10px;width:${(100 - p).toFixed(0)}%;font-size:1px;line-height:1px;">&nbsp;</td>` +
+        `</tr></table>`;
+    }
+    function barTableRow(label, pct, color) {
+      return `<tr><td style="padding:4px 8px;font-size:12px;width:230px;">${esc(label)}</td>` +
+        `<td style="padding:4px 8px;">${soloBar(pct, color)}</td></tr>`;
     }
 
-    let html = `<div style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:680px;">`;
-    html += `<h1 style="color:#1F3864;font-size:20px;margin:0 0 4px;">WCT Behavioral Assessment Report</h1>`;
-    html += `<div style="color:#667;font-size:12px;margin-bottom:16px;">Auto-submitted by the candidate on ${esc(new Date().toLocaleString())}</div>`;
+    let html = `<div style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:700px;">`;
+    html += `<div style="color:#5F3DDB;font-weight:bold;font-size:11px;letter-spacing:1px;text-transform:uppercase;">WCT Holdings Berhad — Learning &amp; Development</div>`;
+    html += `<h1 style="color:#1F3864;font-size:21px;margin:4px 0 2px;">Behavioral Assessment &amp; Capability Profiling Tool</h1>`;
+    html += `<div style="color:#889;font-size:12px;font-weight:bold;margin-bottom:10px;">Recruitment Edition</div>`;
+    html += `<h2 style="color:#1F3864;font-size:17px;margin:16px 0 8px;">Candidate Assessment Report</h2>`;
+    html += `<div style="color:#667;font-size:12px;margin-bottom:4px;">A copy of this report has also been saved to your configured SharePoint location (if set up).</div>`;
+    html += `<div style="color:#667;font-size:12px;margin-bottom:12px;">Auto-submitted by the candidate on ${esc(new Date().toLocaleString())}</div>`;
 
     html += `<table style="border-collapse:collapse;width:100%;margin-bottom:18px;">` + infoRows([
       ["Candidate", state.setup.name || "(not entered)"],
@@ -1867,91 +1890,204 @@ if (typeof module !== "undefined") {
       ["Target Position (internal)", state.setup.title || "(not entered)"],
       ["Job Family", famLabel],
       ["Seniority Tier", tierLabel],
+      ["Assessment Context", contextLabel],
+      ["Date", new Date().toLocaleDateString()],
     ]) + `</table>`;
 
-    html += `<div style="background:${bandColor};color:#fff;border-radius:8px;padding:16px 18px;margin-bottom:18px;">` +
+    html += `<div style="background:${bandColor};color:#fff;border-radius:8px;padding:16px 18px;margin-bottom:10px;">` +
       `<div style="font-size:14px;opacity:.9;">Position Suitability Score</div>` +
       `<div style="font-size:34px;font-weight:800;">${Math.round(score)}%</div>` +
       `<div style="font-size:15px;font-weight:700;">Readiness Index: ${esc(band)}</div>` +
       `<div style="font-size:12.5px;margin-top:6px;">${esc(readinessAction(band))}</div></div>`;
 
-    html += `<div style="margin-bottom:16px;font-size:13px;"><b>Validity:</b> ${esc(validity.rating)} (Consistency Index ${validity.index}/100)`;
+    html += `<div style="margin-bottom:6px;font-size:13px;"><b>Validity:</b> ${esc(validity.rating)} (Consistency Index ${validity.index}/100)`;
     if (validity.flags.length) html += `<br/><span style="color:#B00020;">Flags: ${esc(validity.flags.join("; "))}</span>`;
     html += `</div>`;
+    html += `<div style="font-size:11px;color:#889;margin-bottom:20px;">0 — Not Yet Ready &nbsp;|&nbsp; 70 — Onboarding Support &nbsp;|&nbsp; 85 — Ready Now &nbsp;|&nbsp; 100</div>`;
 
-    html += sectionTitle("Domain Overview");
+    // ================= 1. DOMAIN OVERVIEW =================
+    html += sectionTitle(1, "Domain Overview");
+    html += `<div style="font-size:12.5px;color:#556;margin-bottom:8px;">Each domain below is the average standardized score across its underlying traits, relative to the general working population (see the Ranked Trait Appendix for role-relative gaps).</div>`;
     html += `<table style="border-collapse:collapse;width:100%;margin-bottom:8px;">`;
     Object.keys(DOMAIN_LABELS).forEach((d) => {
       const ids = TRAITS.filter((t) => t.domain === d).map((t) => t.id);
       const avgZ = ids.reduce((s, id) => s + z[id], 0) / ids.length;
-      const pct = Math.max(0, Math.min(100, ((avgZ + 2) / 4) * 100));
-      html += `<tr><td style="padding:5px 10px;font-size:12.5px;width:220px;">${esc(DOMAIN_LABELS[d])}</td>` +
-        `<td style="padding:5px 10px;"><div style="background:#eee;border-radius:6px;height:12px;width:100%;">` +
-        `<div style="background:#1F3864;height:12px;border-radius:6px;width:${pct.toFixed(0)}%;"></div></div></td></tr>`;
+      html += barTableRow(DOMAIN_LABELS[d], ((avgZ + 2) / 4) * 100, "#1F3864");
     });
     html += `</table>`;
 
-    html += sectionTitle("Top Strengths");
-    html += `<ul style="font-size:13px;line-height:1.6;padding-left:20px;margin:0 0 8px;">`;
-    if (strengths.length) strengths.slice(0, 4).forEach((s) => { html += `<li>${esc(s.label)}</li>`; });
-    else html += `<li>No traits currently exceed this role's benchmark target.</li>`;
-    html += `</ul>`;
+    // ================= 2. FULL TRAIT DETAIL =================
+    html += sectionTitle(2, "Full Trait Detail");
+    html += `<div style="font-size:12.5px;color:#556;margin-bottom:8px;">Every trait is scored on a standardized scale; neither end is inherently "better" — fit depends on what ${esc(famLabel)} actually requires.</div>`;
+    Object.keys(DOMAIN_LABELS).forEach((d) => {
+      html += subTitle(DOMAIN_LABELS[d]);
+      TRAITS.filter((t) => t.domain === d).forEach((t) => {
+        const meta = TRAIT_META[t.id];
+        const zv = z[t.id];
+        html += `<div style="border:1px solid #e0e0e0;border-left:4px solid #1F3864;border-radius:6px;padding:10px 14px;margin:8px 0;">` +
+          `<table style="width:100%;border-collapse:collapse;"><tr>` +
+          `<td style="font-weight:bold;color:#1F3864;font-size:14px;">${esc(t.label)}</td>` +
+          `<td style="font-weight:800;color:#5F3DDB;font-size:14px;text-align:right;">${zTo10(zv).toFixed(1)} / 10</td>` +
+          `</tr></table>` +
+          `<div style="font-size:12px;color:#667;font-style:italic;margin:3px 0 8px;">${esc(meta.def)}</div>` +
+          `<table style="border-collapse:collapse;width:100%;margin-bottom:4px;"><tr>` +
+          `<td style="font-size:10px;color:#889;">${esc(meta.neg)}</td>` +
+          `<td style="font-size:10px;color:#889;text-align:right;">${esc(meta.pos)}</td></tr></table>` +
+          soloBar(((zv + 2) / 4) * 100, "#7C5CFC") +
+          `<div style="font-size:13px;color:#333;margin-top:6px;">${esc(narrativeFor(t.id, zv))}</div>` +
+          `</div>`;
+      });
+    });
 
-    html += sectionTitle("Areas to Probe / Develop");
-    html += `<ul style="font-size:13px;line-height:1.6;padding-left:20px;margin:0 0 8px;">`;
-    if (derailers.length) derailers.slice(0, 4).forEach((d) => { html += `<li>${esc(d.label)}</li>`; });
-    else html += `<li>No material gaps detected against this role's benchmark.</li>`;
-    html += `</ul>`;
-
-    html += sectionTitle("Paradox Graph — Behavioral Leans");
-    html += `<table style="border-collapse:collapse;width:100%;margin-bottom:8px;">`;
+    // ================= 3. PARADOX GRAPH =================
+    html += sectionTitle(3, "Paradox Graph");
+    html += `<div style="font-size:12.5px;color:#556;margin-bottom:8px;">Each pairing plots two independent traits against each other. All four combinations are described below, with this candidate's actual lean highlighted.</div>`;
     TENSION_PAIRS.forEach((tp) => {
       const za = z[tp.a], zb = z[tp.b];
+      const metaA = TRAIT_META[tp.a], metaB = TRAIT_META[tp.b];
+      const traitA = traitById[tp.a], traitB = traitById[tp.b];
       const activeKey = (za >= 0) ? ((zb >= 0) ? "hh" : "hl") : ((zb >= 0) ? "lh" : "ll");
-      const q = tp.quadrants[activeKey];
-      html += `<tr><td style="padding:6px 10px;font-weight:bold;background:#f2f2f2;border:1px solid #e0e0e0;width:200px;">${esc(tp.label)}</td>` +
-        `<td style="padding:6px 10px;border:1px solid #e0e0e0;"><b>${esc(q.name)}</b> — ${esc(q.desc)}</td></tr>`;
+      const q = tp.quadrants;
+      html += `<div style="border:1px solid #e0e0e0;border-radius:8px;padding:12px 16px;margin:10px 0;">` +
+        `<h4 style="color:#1F3864;font-size:14px;margin:0 0 8px;">${esc(tp.label)}</h4>` +
+        `<div style="font-size:11.5px;color:#556;margin-bottom:4px;"><b>${esc(traitA.label)}:</b> ${esc(metaA.def)}</div>` +
+        `<div style="font-size:11.5px;color:#556;margin-bottom:8px;"><b>${esc(traitB.label)}:</b> ${esc(metaB.def)}</div>`;
+      ["hh", "hl", "lh", "ll"].forEach((key) => {
+        const isActive = key === activeKey;
+        const combo = q[key];
+        html += `<div style="font-size:11.5px;color:${isActive ? "#1F3864" : "#556"};background:${isActive ? "#f5f3ff" : "transparent"};padding:${isActive ? "4px 6px" : "2px 0"};border-radius:6px;margin-bottom:2px;">` +
+          `<b>${esc(combo.name)}</b> — ${esc(combo.desc)}</div>`;
+      });
+      html += `<div style="margin-top:8px;padding:8px 10px;background:#f5f3ff;border-left:4px solid #7C5CFC;font-size:13px;"><b>This candidate leans toward: ${esc(q[activeKey].name)}</b></div>`;
+      html += `</div>`;
+    });
+
+    // ================= 4. KEYWORDS & SUMMARY NARRATIVE =================
+    html += sectionTitle(4, "Keywords & Summary Narrative");
+    const strongKw = rankedTraits.filter((t) => t.z >= 0.5).sort((a, b) => b.z - a.z).map((t) => TRAIT_META[t.id].pos);
+    const watchKw = rankedTraits.filter((t) => t.z <= -0.5).sort((a, b) => a.z - b.z).map((t) => TRAIT_META[t.id].neg);
+    html += `<table style="border-collapse:collapse;width:100%;margin-bottom:12px;"><tr>` +
+      `<td style="vertical-align:top;width:33%;padding-right:10px;"><b style="font-size:12.5px;color:#1F3864;">Strengths</b><br/>` +
+      (strongKw.length ? strongKw.map((k) => `<span style="display:inline-block;background:#dcf7f1;color:#007a68;border-radius:12px;padding:3px 10px;font-size:11.5px;margin:4px 4px 0 0;">${esc(k)}</span>`).join("") : `<span style="font-size:12px;color:#889;">None at this threshold.</span>`) +
+      `</td><td style="vertical-align:top;width:33%;padding-right:10px;"><b style="font-size:12.5px;color:#1F3864;">Watch Areas</b><br/>` +
+      (watchKw.length ? watchKw.map((k) => `<span style="display:inline-block;background:#ffe6e6;color:#b23a3a;border-radius:12px;padding:3px 10px;font-size:11.5px;margin:4px 4px 0 0;">${esc(k)}</span>`).join("") : `<span style="font-size:12px;color:#889;">None at this threshold.</span>`) +
+      `</td><td style="vertical-align:top;width:33%;"><b style="font-size:12.5px;color:#1F3864;">Readiness Index</b><br/>` +
+      `<span style="display:inline-block;background:${bandColor};color:#fff;border-radius:12px;padding:3px 10px;font-size:11.5px;margin-top:4px;">${esc(band)} — ${Math.round(score)}%</span></td>` +
+      `</tr></table>`;
+    const topStr = strengths.slice(0, 3).map((s) => s.label).join(", ") || "no standout traits above this role's benchmark";
+    const topDer = derailers.slice(0, 3).map((d) => d.label).join(", ") || "no material gaps against this role's benchmark";
+    const candName = state.setup.name || "The candidate";
+    const summaryNarrative = `${candName} returns an overall Position Suitability Score of ${Math.round(score)}% (${band}) against the ${famLabel} — ${effTierLabel} benchmark under a ${contextLabel} lens. The strongest role-relevant traits are ${topStr}. The areas most worth probing further in interview or onboarding are ${topDer}. Response validity is rated ${validity.rating} (Consistency Index ${validity.index}/100)${validity.flags.length ? ", with flags noted above that should temper confidence in the profile" : ", with no flags raised, supporting confidence in the profile"}.`;
+    html += `<div style="background:#f9f8ff;border-left:5px solid #7C5CFC;padding:12px 16px;font-size:13.5px;line-height:1.6;">${esc(summaryNarrative)}</div>`;
+
+    // ================= 5. RANKED TRAIT APPENDIX =================
+    html += sectionTitle(5, "Ranked Trait Appendix");
+    html += `<div style="font-size:12.5px;color:#556;margin-bottom:8px;">All 15 traits, ranked by weight in this role's benchmark. Essential (top third) drive the Suitability Score the most; Other (bottom third) carry the least weight for this role/tier/context.</div>`;
+    html += `<table style="border-collapse:collapse;width:100%;margin-bottom:8px;">` +
+      `<tr><td style="font-weight:bold;background:#1F3864;color:#fff;padding:6px 8px;font-size:12px;">Trait</td>` +
+      `<td style="font-weight:bold;background:#1F3864;color:#fff;padding:6px 8px;font-size:12px;">Domain</td>` +
+      `<td style="font-weight:bold;background:#1F3864;color:#fff;padding:6px 8px;font-size:12px;">Score</td>` +
+      `<td style="font-weight:bold;background:#1F3864;color:#fff;padding:6px 8px;font-size:12px;">Weight</td>` +
+      `<td style="font-weight:bold;background:#1F3864;color:#fff;padding:6px 8px;font-size:12px;">Tier</td></tr>`;
+    rankedTraits.forEach((t, i) => {
+      const tier = i < 5 ? "Essential" : i < 10 ? "Desirable" : "Other";
+      const tierColor = i < 5 ? "#007a68" : i < 10 ? "#1a54c4" : "#778";
+      const tierBg = i < 5 ? "#dcf7f1" : i < 10 ? "#e2ecff" : "#f2f2f2";
+      html += `<tr><td style="padding:5px 8px;font-size:12px;border:1px solid #eee;">${esc(t.label)}</td>` +
+        `<td style="padding:5px 8px;font-size:12px;border:1px solid #eee;">${esc(DOMAIN_LABELS[t.domain])}</td>` +
+        `<td style="padding:5px 8px;font-size:12px;border:1px solid #eee;">${zTo10(t.z).toFixed(1)}</td>` +
+        `<td style="padding:5px 8px;font-size:12px;border:1px solid #eee;">${(t.weight * 100).toFixed(1)}%</td>` +
+        `<td style="padding:5px 8px;font-size:11.5px;border:1px solid #eee;"><span style="background:${tierBg};color:${tierColor};padding:2px 8px;border-radius:10px;font-weight:bold;">${tier}</span></td></tr>`;
     });
     html += `</table>`;
 
-    html += sectionTitle("Career Aspirations (Self-Reported)");
+    // ================= 6. MANAGEMENT GUIDANCE =================
+    html += sectionTitle(6, "Management Guidance");
+    html += subTitle("Leveraging Strengths");
+    html += `<ul style="font-size:13px;line-height:1.6;padding-left:20px;margin:0 0 10px;">`;
+    if (strengths.length) strengths.slice(0, 4).forEach((s) => { html += `<li>Assign work that draws on ${esc(s.label.toLowerCase())} — this trait predicts ${esc(TRAIT_META[s.id].predicts)}.</li>`; });
+    else html += `<li>No traits currently exceed this role's benchmark target; focus onboarding on structured skill-building rather than leaning on existing strengths.</li>`;
+    html += `</ul>`;
+    html += subTitle("Managing Potential Derailers");
+    html += `<ul style="font-size:13px;line-height:1.6;padding-left:20px;margin:0 0 10px;">`;
+    if (derailers.length) derailers.slice(0, 4).forEach((d) => { html += `<li>Provide extra structure, checklists, or a mentor for ${esc(d.label.toLowerCase())} — this gap is most likely to surface under ${esc(TRAIT_META[d.id].predicts)}.</li>`; });
+    else html += `<li>No material gaps detected against this role's benchmark.</li>`;
+    html += `</ul>`;
+    html += subTitle("Suggested Management Style");
+    const styleLine1 = (TIERS[effTier] && (TIERS[effTier].label.startsWith("Tier 1") || TIERS[effTier].label.startsWith("Tier 2")))
+      ? "At this tier, favor clear task-level direction, frequent check-ins, and concrete feedback over open-ended delegation."
+      : "At this tier, favor outcome-based delegation, regular strategic check-ins, and room for independent judgment.";
+    const styleLine2 = state.setup.contextKey === "increment"
+      ? "This is an increment/performance review context — anchor the conversation on demonstrated on-the-job evidence for each trait above, not just the assessment scores."
+      : state.setup.contextKey === "promotion"
+      ? "This is a promotion context — the benchmark above has already been shifted one tier up; treat borderline traits as coaching priorities for the first 90 days in the new role."
+      : "This is a recruitment context — treat the Derailers section as your structured interview focus, not an automatic disqualifier.";
+    html += `<ul style="font-size:13px;line-height:1.6;padding-left:20px;margin:0 0 10px;"><li>${esc(styleLine1)}</li><li>${esc(styleLine2)}</li></ul>`;
+
+    // ================= 7. FULL INTERVIEW GUIDE =================
+    html += sectionTitle(7, "Full Interview Guide");
+    html += `<div style="background:#f9f8ff;border-left:5px solid #7C5CFC;padding:10px 14px;font-size:12.5px;margin-bottom:10px;">One behavioral question per trait, ordered by role relevance. Use the 11-point scale (0 = no evidence / strong negative evidence, 10 = strong positive evidence) to rate the candidate's actual answer, not their assessment score.</div>`;
+    rankedTraits.forEach((t) => {
+      const meta = TRAIT_META[t.id];
+      const q = INTERVIEW_QUESTIONS[t.id] || "";
+      html += `<div style="border:1px solid #e0e0e0;border-radius:6px;padding:10px 14px;margin:8px 0;">` +
+        `<div style="font-size:13.5px;"><b style="color:#1F3864;">${esc(t.label)}</b> <span style="color:#889;font-size:11.5px;">(${esc(DOMAIN_LABELS[t.domain])} — role weight ${(t.weight * 100).toFixed(1)}%)</span></div>` +
+        `<div style="font-size:11.5px;color:#889;margin:4px 0;">Look for: concrete examples relevant to ${esc(meta.predicts)}.</div>` +
+        `<div style="font-size:13px;color:#333;">${esc(q)}</div>` +
+        `<div style="font-size:10px;color:#aab;margin-top:6px;">0&nbsp;&nbsp;1&nbsp;&nbsp;2&nbsp;&nbsp;3&nbsp;&nbsp;4&nbsp;&nbsp;5&nbsp;&nbsp;6&nbsp;&nbsp;7&nbsp;&nbsp;8&nbsp;&nbsp;9&nbsp;&nbsp;10</div>` +
+        `</div>`;
+    });
+
+    // ================= 8. CAREER ASPIRATIONS =================
+    html += sectionTitle(8, "Career Aspirations (Self-Reported)");
+    html += `<div style="font-size:12px;color:#889;margin-bottom:8px;">Captured directly from the candidate. Informational only — not scored and not blended into the Suitability Score or Readiness Index above.</div>`;
     html += `<table style="border-collapse:collapse;width:100%;margin-bottom:8px;">` + infoRows([
       ["Aspired Path", state.aspirations.path || "(not entered)"],
       ["Preferred Direction", state.aspirations.orientation || "(not entered)"],
       ["Target Timeframe", state.aspirations.timeframe || "(not entered)"],
     ]) + `</table>`;
 
-    html += sectionTitle("Values Alignment Snapshot");
+    // ================= 9. VALUES ALIGNMENT =================
+    html += sectionTitle(9, "Values Alignment Snapshot (Self-Reported)");
+    html += `<div style="font-size:12px;color:#889;margin-bottom:8px;">Self-rated alignment against WCT Holdings Berhad's four core values. Informational only.</div>`;
     html += `<table style="border-collapse:collapse;width:100%;margin-bottom:8px;">`;
     VALUES_ITEMS.forEach((v) => {
       const rating = state.values[v.id];
-      html += `<tr><td style="padding:5px 10px;font-size:12.5px;width:220px;">${esc(v.value)}</td>` +
-        `<td style="padding:5px 10px;font-size:12.5px;">${rating ? rating + "/5" : "not answered"}</td></tr>`;
+      html += barTableRow(`${v.value} — ${rating ? rating + "/5" : "not answered"}`, rating ? (rating / 5) * 100 : 0, "#00BFA6");
     });
     html += `</table>`;
 
-    html += sectionTitle("Emotional Intelligence Snapshot");
+    // ================= 10. EQ SNAPSHOT =================
+    html += sectionTitle(10, "Emotional Intelligence Snapshot (Self-Reported)");
+    html += `<div style="font-size:12px;color:#889;margin-bottom:8px;">Self-rated across four EQ subdomains (2 items each, averaged). Informational only.</div>`;
     html += `<table style="border-collapse:collapse;width:100%;margin-bottom:8px;">`;
     EQ_SUBDOMAINS.forEach((sd) => {
       const items = EQ_ITEMS.filter((eq) => eq.subdomain === sd);
       const vals = items.map((eq) => state.eq[eq.id]).filter((v) => v);
-      const avg = vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : null;
-      html += `<tr><td style="padding:5px 10px;font-size:12.5px;width:220px;">${esc(sd)}</td>` +
-        `<td style="padding:5px 10px;font-size:12.5px;">${avg ? avg + "/5" : "not answered"}</td></tr>`;
+      const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+      html += barTableRow(`${sd} — ${avg ? avg.toFixed(1) + "/5" : "not answered"}`, (avg / 5) * 100, "#7C5CFC");
     });
     html += `</table>`;
 
-    html += sectionTitle("Lightweight Development Plan");
+    // ================= 11. LIGHTWEIGHT IDP =================
+    html += sectionTitle(11, "Lightweight Individual Development Plan (IDP)");
+    html += `<div style="font-size:12.5px;color:#556;margin-bottom:8px;">Drawn from the top gap traits against this role's benchmark — a starting point for a 90-day onboarding/development conversation, not a finished plan.</div>`;
     html += `<table style="border-collapse:collapse;width:100%;margin-bottom:8px;">` +
-      `<tr><td style="padding:6px 10px;font-weight:bold;background:#1F3864;color:#fff;">Focus Area</td>` +
-      `<td style="padding:6px 10px;font-weight:bold;background:#1F3864;color:#fff;">Suggested Action</td></tr>`;
+      `<tr><td style="font-weight:bold;background:#1F3864;color:#fff;padding:6px 8px;font-size:12px;">Focus Area</td>` +
+      `<td style="font-weight:bold;background:#1F3864;color:#fff;padding:6px 8px;font-size:12px;">Why It Matters</td>` +
+      `<td style="font-weight:bold;background:#1F3864;color:#fff;padding:6px 8px;font-size:12px;">Suggested Action</td>` +
+      `<td style="font-weight:bold;background:#1F3864;color:#fff;padding:6px 8px;font-size:12px;">Timeframe</td></tr>`;
     const idpTimeframes = ["First 30 days", "30-60 days", "60-90 days"];
     if (derailers.length) {
       derailers.slice(0, 3).forEach((d, i) => {
         const meta = TRAIT_META[d.id];
-        html += `<tr><td style="padding:6px 10px;border:1px solid #e0e0e0;">${esc(d.label)}</td>` +
-          `<td style="padding:6px 10px;border:1px solid #e0e0e0;">Provide extra structure/mentoring for ${esc(d.label.toLowerCase())} (${esc(idpTimeframes[i])}) — relevant to ${esc(meta.predicts)}.</td></tr>`;
+        html += `<tr><td style="padding:5px 8px;font-size:12px;border:1px solid #eee;">${esc(d.label)}</td>` +
+          `<td style="padding:5px 8px;font-size:12px;border:1px solid #eee;">Directly relevant to ${esc(meta.predicts)}.</td>` +
+          `<td style="padding:5px 8px;font-size:12px;border:1px solid #eee;">Provide extra structure, checklists, or a mentor for ${esc(d.label.toLowerCase())}; revisit progress at the ${esc(idpTimeframes[i].toLowerCase())} mark.</td>` +
+          `<td style="padding:5px 8px;font-size:12px;border:1px solid #eee;">${esc(idpTimeframes[i])}</td></tr>`;
       });
+    } else {
+      html += `<tr><td colspan="4" style="padding:8px;font-size:12px;border:1px solid #eee;">No material gaps detected against this role's benchmark — focus onboarding on role ramp-up rather than remediation.</td></tr>`;
     }
     html += `</table>`;
 
