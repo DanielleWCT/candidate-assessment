@@ -1014,7 +1014,7 @@ if (typeof module !== "undefined") {
   //    comes from ?family=...&tier=...&title=... on the URL, so HR can hand out
   //    different links (all pointing at the one published file) per role opening
   //    without ever re-publishing. The candidate never sees HR Setup either way.
-  const SITE_CONFIG_RAW = "{\"hrEmail\":\"sim-sim.teh@wct.my\",\"flowUrl\":\"https://defaulte41691d30c4541fd92c76d4d998490.50.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/02/workflows/a5cc2f48c3b743fa8d4772bf78a5848f/triggers/manual/paths/invoke?api-version=1\"}";
+  const SITE_CONFIG_RAW = "{\"hrEmail\":\"sim-sim.teh@wct.my\",\"flowUrl\":\"https://defaulte41691d30c4541fd92c76d4d998490.50.environment.api.powerplatform.com:443/powerautomate/automations/direct/cu/02/workflows/a5cc2f48c3b743fa8d4772bf78a5848f/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=ml2DbSgc1bFXDtYRest7x4eA0ZbOv91A0F4V3wpPZR8\"}";
   let SITE_CONFIG = null;
   try { SITE_CONFIG = JSON.parse(SITE_CONFIG_RAW); } catch (e) { SITE_CONFIG = null; }
   // Captured before any render() mutates the page, so "Generate File to Publish"
