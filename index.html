@@ -570,25 +570,50 @@ function readinessAction(band) {
   return "Material gaps against this role's benchmark. Consider a different role/tier, or revisit after further development.";
 }
 
-// ---------- Validity Index (Section 5) ----------
-// likertPairs: [{a: rating1to5, b: rating1to5}] where b is the reverse-worded statement (NOT pre-reversed)
+// ---------- Response Consistency (per-trait repeat/paraphrase check) ----------
+// likertResponses: [{trait, keyed: "pos"|"neg", rating: 1..5}] — the ~75-item
+// bank asks each of the 15 traits about 5 times, in different wording (some
+// straight, some reverse-worded). A genuine respondent's answers for a given
+// trait should cluster together once "neg" items are flipped back (6 - rating);
+// someone answering randomly, or trying to fake a uniformly good profile,
+// will tend to produce a wide spread within at least some traits. This is the
+// main "harder to lie" signal — most of the ~100-item length of the full
+// assessment comes from this bank existing at all.
+function traitLikertConsistency(likertResponses) {
+  const byTrait = {};
+  for (const r of likertResponses) {
+    if (r == null || r.rating == null) continue;
+    const dirVal = r.keyed === "neg" ? 6 - r.rating : r.rating; // 1..5, higher = more of the trait
+    (byTrait[r.trait] = byTrait[r.trait] || []).push(dirVal);
+  }
+  const perTrait = {};
+  let sumScore = 0, n = 0;
+  for (const [traitId, vals] of Object.entries(byTrait)) {
+    if (vals.length < 2) continue;
+    const spread = Math.max(...vals) - Math.min(...vals); // 0..4
+    const score = Math.max(0, 100 - (spread / 4) * 100);
+    perTrait[traitId] = { values: vals, spread, score };
+    sumScore += score;
+    n++;
+  }
+  const avgScore = n ? sumScore / n : 100;
+  const flaggedTraits = Object.entries(perTrait).filter(([, v]) => v.spread >= 3).map(([id]) => id);
+  return { avgScore, perTrait, flaggedTraits };
+}
+
+// ---------- Validity / Response Consistency Index (Section 5) ----------
+// traitConsistencyScore: 0..100, from traitLikertConsistency() above — this is
+// now the dominant signal (built from ~75 items instead of a handful).
 // bogusRatings: array of 1..5 ratings on paradoxical/bogus items
-// reversalChecks: array of {consistent: boolean}
+// reversalChecks: array of {consistent: boolean} (from the forced-choice quads)
 // avgSecPerQuad: number
-function validityIndex({ likertPairs = [], bogusRatings = [], reversalChecks = [], avgSecPerQuad = 10 }) {
-  let idx = 100;
+function validityIndex({ traitConsistencyScore = 100, bogusRatings = [], reversalChecks = [], avgSecPerQuad = 10 }) {
+  let idx = traitConsistencyScore;
   const flags = [];
 
-  for (const pair of likertPairs) {
-    const reversedB = 6 - pair.b; // reverse-score a 1-5 item
-    if (Math.abs(pair.a - reversedB) >= 3) {
-      idx -= 15;
-      flags.push("Duplicate-concept contradiction detected");
-    }
-  }
   for (const r of bogusRatings) {
     if (r >= 4) {
-      idx -= 20;
+      idx -= 15;
       flags.push("Paradoxical/bogus item endorsed");
     }
   }
@@ -602,7 +627,7 @@ function validityIndex({ likertPairs = [], bogusRatings = [], reversalChecks = [
     idx -= 10;
     flags.push("Very fast completion time (possible careless responding)");
   }
-  idx = Math.max(0, Math.min(100, idx));
+  idx = Math.max(0, Math.min(100, Math.round(idx)));
 
   let rating = "Valid";
   if (idx < 60) rating = "Invalid";
@@ -636,7 +661,7 @@ if (typeof module !== "undefined") {
   module.exports = {
     TRAITS, DOMAIN_LABELS, FAMILIES, TIERS, TIER_ORDER, CONTEXTS,
     computeTraitWeights, effectiveTier, scoreQuads, suitabilityScore,
-    fitBand, readinessAction, validityIndex, strengthsAndDerailers,
+    fitBand, readinessAction, validityIndex, traitLikertConsistency, strengthsAndDerailers,
   };
 }
 
@@ -816,14 +841,106 @@ const REVERSAL_CHECK_PAIRS = [
   { quadA: "Q2", quadB: "Q26", traitX: "D3", traitY: "I1" },
 ];
 
-// duplicate-concept Likert pairs (a = statement, b = reverse-worded statement, rated 1-5 agree)
-const LIKERT_PAIRS = [
-  { id: "LP1", a: "I stick to procedures even when it's inconvenient to do so.",
-               b: "Rules should flex whenever the situation calls for it." },
-  { id: "LP2", a: "I prefer to review my work carefully before submitting it.",
-               b: "I'm comfortable submitting work without a final review if I'm confident in it." },
-  { id: "LP3", a: "I prefer making decisions together with my team.",
-               b: "I prefer making decisions on my own without needing group input." },
+// ---------- Response Consistency bank ----------
+// 5 rated statements per trait (75 total): a mix of "pos"-keyed statements
+// (agreeing = more of the trait) and "neg"-keyed, reverse-worded statements
+// (agreeing = less of the trait). Each is a fresh paraphrase, not a repeat of
+// any quad wording. A genuine respondent's 5 answers for a given trait should
+// point the same direction once "neg" items are reverse-scored; wide spread
+// within a trait is what the Response Consistency Score penalizes — this is
+// the mechanism that makes it harder to fake the assessment by answering
+// randomly or trying to look uniformly good on every item.
+const LIKERT_ITEMS = [
+  // L1 — Strategic Direction-Setting
+  { id: "LK-L1a", trait: "L1", keyed: "pos", text: "I like to think through where a project is headed before diving into the details." },
+  { id: "LK-L1b", trait: "L1", keyed: "pos", text: "I naturally plan several steps ahead rather than focusing only on the task in front of me." },
+  { id: "LK-L1c", trait: "L1", keyed: "pos", text: "I find it useful to picture the end goal before starting any new piece of work." },
+  { id: "LK-L1d", trait: "L1", keyed: "neg", text: "I'd rather just start working and figure out the direction as I go." },
+  { id: "LK-L1e", trait: "L1", keyed: "neg", text: "Long-term planning feels like a distraction from getting today's work done." },
+  // L2 — Decision-Making Under Ownership
+  { id: "LK-L2a", trait: "L2", keyed: "pos", text: "I'm comfortable making a call on my own when I have to." },
+  { id: "LK-L2b", trait: "L2", keyed: "pos", text: "When a decision needs to be made quickly, I'll make it rather than wait for someone else to." },
+  { id: "LK-L2c", trait: "L2", keyed: "pos", text: "I take ownership of decisions even when I didn't have all the information." },
+  { id: "LK-L2d", trait: "L2", keyed: "neg", text: "I'd rather escalate a decision than risk being the one who made the wrong call." },
+  { id: "LK-L2e", trait: "L2", keyed: "neg", text: "I prefer someone else to make the final call whenever possible." },
+  // L3 — Results & Performance Drive
+  { id: "LK-L3a", trait: "L3", keyed: "pos", text: "Hitting the target is one of the things I care about most in my work." },
+  { id: "LK-L3b", trait: "L3", keyed: "pos", text: "I keep pushing until a goal is actually achieved, not just attempted." },
+  { id: "LK-L3c", trait: "L3", keyed: "pos", text: "I track my own performance closely against what I set out to do." },
+  { id: "LK-L3d", trait: "L3", keyed: "neg", text: "As long as I've tried my best, whether the target is hit matters less to me." },
+  { id: "LK-L3e", trait: "L3", keyed: "neg", text: "I don't pay much attention to numbers or targets in my day-to-day work." },
+  // I1 — Communication & Persuasion
+  { id: "LK-I1a", trait: "I1", keyed: "pos", text: "I can usually get a room to see things my way, even when people disagree at first." },
+  { id: "LK-I1b", trait: "I1", keyed: "pos", text: "I'm confident explaining my ideas to senior people." },
+  { id: "LK-I1c", trait: "I1", keyed: "pos", text: "People tell me I'm easy to understand, even when the topic is complicated." },
+  { id: "LK-I1d", trait: "I1", keyed: "neg", text: "I find it hard to change someone's mind once they've made a decision." },
+  { id: "LK-I1e", trait: "I1", keyed: "neg", text: "I'd rather write things down than speak up in a meeting." },
+  // I2 — Collaboration & Team Orientation
+  { id: "LK-I2a", trait: "I2", keyed: "pos", text: "I genuinely enjoy working closely with a team rather than alone." },
+  { id: "LK-I2b", trait: "I2", keyed: "pos", text: "I check in with teammates regularly to make sure we're aligned." },
+  { id: "LK-I2c", trait: "I2", keyed: "pos", text: "I'll help a colleague finish their work even if it's not officially my job." },
+  { id: "LK-I2d", trait: "I2", keyed: "neg", text: "I get more done when I'm left to work by myself." },
+  { id: "LK-I2e", trait: "I2", keyed: "neg", text: "I don't feel the need to keep others updated unless they ask." },
+  // I3 — Stakeholder & Authority Management
+  { id: "LK-I3a", trait: "I3", keyed: "pos", text: "I'm comfortable managing relationships with regulators, landlords, or senior outsiders." },
+  { id: "LK-I3b", trait: "I3", keyed: "pos", text: "I know how to keep a difficult external party on side during a disagreement." },
+  { id: "LK-I3c", trait: "I3", keyed: "pos", text: "I adjust how I communicate depending on who I'm dealing with." },
+  { id: "LK-I3d", trait: "I3", keyed: "neg", text: "Dealing with demanding external parties is a part of my job I try to avoid." },
+  { id: "LK-I3e", trait: "I3", keyed: "neg", text: "I find it stressful to manage a relationship with someone senior to me outside my company." },
+  // P1 — Attention to Detail / Accuracy
+  { id: "LK-P1a", trait: "P1", keyed: "pos", text: "I double-check my work even when I'm confident it's correct." },
+  { id: "LK-P1b", trait: "P1", keyed: "pos", text: "Small errors that others miss tend to stand out to me." },
+  { id: "LK-P1c", trait: "P1", keyed: "pos", text: "Getting the details right matters more to me than finishing quickly." },
+  { id: "LK-P1d", trait: "P1", keyed: "neg", text: "I'd rather submit something on time than spend extra time perfecting it." },
+  { id: "LK-P1e", trait: "P1", keyed: "neg", text: "Minor mistakes don't bother me much as long as the overall result is fine." },
+  // P2 — Practical / Innovative Problem Solving
+  { id: "LK-P2a", trait: "P2", keyed: "pos", text: "I enjoy figuring out a fix when something breaks unexpectedly." },
+  { id: "LK-P2b", trait: "P2", keyed: "pos", text: "I look for practical workarounds rather than waiting for a perfect solution." },
+  { id: "LK-P2c", trait: "P2", keyed: "pos", text: "I'm usually the one people come to when a problem needs solving fast." },
+  { id: "LK-P2d", trait: "P2", keyed: "neg", text: "I prefer to follow an existing process rather than improvise a new solution." },
+  { id: "LK-P2e", trait: "P2", keyed: "neg", text: "Unexpected problems tend to throw me off rather than energize me." },
+  // P3 — Risk & Compliance Judgment
+  { id: "LK-P3a", trait: "P3", keyed: "pos", text: "I'll flag a compliance or safety concern even if it slows things down." },
+  { id: "LK-P3b", trait: "P3", keyed: "pos", text: "I read the fine print of policies that affect my work." },
+  { id: "LK-P3c", trait: "P3", keyed: "pos", text: "I'd stop or delay something if I judged it genuinely unsafe or non-compliant." },
+  { id: "LK-P3d", trait: "P3", keyed: "neg", text: "I'll let a minor compliance issue slide if raising it would hold up the schedule." },
+  { id: "LK-P3e", trait: "P3", keyed: "neg", text: "I don't usually think about the compliance side of decisions unless someone raises it." },
+  // A1 — Stress Tolerance / Composure
+  { id: "LK-A1a", trait: "A1", keyed: "pos", text: "I stay calm and think clearly when something goes wrong on the spot." },
+  { id: "LK-A1b", trait: "A1", keyed: "pos", text: "Pressure tends to bring out my best work, not my worst." },
+  { id: "LK-A1c", trait: "A1", keyed: "pos", text: "I recover quickly after a stressful incident at work." },
+  { id: "LK-A1d", trait: "A1", keyed: "neg", text: "A sudden crisis at work throws me off my game for a while." },
+  { id: "LK-A1e", trait: "A1", keyed: "neg", text: "I find it hard to think straight when things get tense or urgent." },
+  // A2 — Change Adaptability
+  { id: "LK-A2a", trait: "A2", keyed: "pos", text: "I adjust quickly when a plan changes at the last minute." },
+  { id: "LK-A2b", trait: "A2", keyed: "pos", text: "New instructions midway through a task don't slow me down much." },
+  { id: "LK-A2c", trait: "A2", keyed: "pos", text: "I can drop an approach I was attached to if circumstances change." },
+  { id: "LK-A2d", trait: "A2", keyed: "neg", text: "I get uncomfortable when plans change unexpectedly." },
+  { id: "LK-A2e", trait: "A2", keyed: "neg", text: "I prefer to finish things the way they were originally agreed, even if circumstances shift." },
+  // A3 — Learning Agility
+  { id: "LK-A3a", trait: "A3", keyed: "pos", text: "I pick up new systems or tools faster than most people around me." },
+  { id: "LK-A3b", trait: "A3", keyed: "pos", text: "I actively seek out training on things I don't yet know well." },
+  { id: "LK-A3c", trait: "A3", keyed: "pos", text: "I'm comfortable being a beginner again when something changes." },
+  { id: "LK-A3d", trait: "A3", keyed: "neg", text: "I'd rather stick with what I already know than learn a new way of doing things." },
+  { id: "LK-A3e", trait: "A3", keyed: "neg", text: "Learning a new system or process usually takes me longer than most colleagues." },
+  // D1 — Conscientiousness & Reliability
+  { id: "LK-D1a", trait: "D1", keyed: "pos", text: "People can rely on me to do exactly what I said I would." },
+  { id: "LK-D1b", trait: "D1", keyed: "pos", text: "I follow up on loose ends even after a task is technically done." },
+  { id: "LK-D1c", trait: "D1", keyed: "pos", text: "I show up prepared and on time without needing reminders." },
+  { id: "LK-D1d", trait: "D1", keyed: "neg", text: "I sometimes need a reminder to follow through on something I committed to." },
+  { id: "LK-D1e", trait: "D1", keyed: "neg", text: "I occasionally let small commitments slip if something more urgent comes up." },
+  // D2 — Initiative & Self-Motivation
+  { id: "LK-D2a", trait: "D2", keyed: "pos", text: "I take on extra work without waiting to be asked." },
+  { id: "LK-D2b", trait: "D2", keyed: "pos", text: "I bring up ideas even when nobody specifically asked for them." },
+  { id: "LK-D2c", trait: "D2", keyed: "pos", text: "I chase down answers myself instead of waiting for someone else to." },
+  { id: "LK-D2d", trait: "D2", keyed: "neg", text: "I generally wait to be asked before taking on additional work." },
+  { id: "LK-D2e", trait: "D2", keyed: "neg", text: "I'll raise an idea only if someone specifically invites me to." },
+  // D3 — Integrity & Rule Adherence
+  { id: "LK-D3a", trait: "D3", keyed: "pos", text: "I hold myself to the same standard whether or not anyone is watching." },
+  { id: "LK-D3b", trait: "D3", keyed: "pos", text: "I'd rather be right about a rule than popular in the room." },
+  { id: "LK-D3c", trait: "D3", keyed: "pos", text: "I report things accurately even when the truth is inconvenient." },
+  { id: "LK-D3d", trait: "D3", keyed: "neg", text: "I'll bend a rule if it clearly helps get the job done faster." },
+  { id: "LK-D3e", trait: "D3", keyed: "neg", text: "Rules should flex depending on the situation." },
 ];
 
 // bogus / paradoxical items (rated 1-5 agree; endorsing = red flag)
@@ -831,6 +948,8 @@ const BOGUS_ITEMS = [
   { id: "BG1", text: "I have never once, in my entire career, made an avoidable mistake." },
   { id: "BG2", text: "I get along equally well with absolutely everyone I have ever worked with, without exception." },
   { id: "BG3", text: "I have never felt frustrated or impatient at work, even under pressure." },
+  { id: "BG4", text: "I have never once disagreed with a decision made by my manager." },
+  { id: "BG5", text: "I complete every task perfectly on the very first attempt, every single time." },
 ];
 
 // interview question templates per trait, for the auto-generated derailer probes
@@ -853,7 +972,7 @@ const INTERVIEW_QUESTIONS = {
 };
 
 if (typeof module !== "undefined") {
-  module.exports = { QUADS, REVERSAL_CHECK_PAIRS, LIKERT_PAIRS, BOGUS_ITEMS, INTERVIEW_QUESTIONS };
+  module.exports = { QUADS, REVERSAL_CHECK_PAIRS, LIKERT_ITEMS, BOGUS_ITEMS, INTERVIEW_QUESTIONS };
 }
 
 
@@ -1060,7 +1179,7 @@ if (typeof module !== "undefined") {
     quadAnswers: {}, // quadId -> {most, least}
     quadTimes: {},   // quadId -> seconds
     quadShownAt: null,
-    likert: {},      // LPid -> {a, b}
+    likert: {},      // LIKERT_ITEMS id -> rating (1-5) — the ~75-item response-consistency bank
     bogus: {},       // BGid -> rating
     aspirations: { path: "", orientation: "", timeframe: "" }, // career aspiration capture (self-reported, informational only)
     values: {},      // value item id -> 1-5 rating (self-reported, informational only)
@@ -1084,7 +1203,7 @@ if (typeof module !== "undefined") {
     { name: "Final Stretch", blurb: "Almost there — just a few more.", count: 3 },
   ];
   const ABOUTYOU_ACTIVITY = { name: "About You & Your Path", blurb: "A few reflection questions about your career goals, values, and working style. These are not scored against the role." };
-  const LIKERT_ACTIVITY = { name: "Quick Gut-Checks", blurb: "A handful of quick agree/disagree calls to wrap up." };
+  const LIKERT_ACTIVITY = { name: "Statements About Your Work Style", blurb: "Rate how much you agree with each statement. There are quite a few — go with your first instinct on each one rather than overthinking it." };
 
   // Values Alignment snapshot — mapped to WCT Holdings Berhad's actual four core
   // corporate values. Self-reported, 1-5 agreement scale, informational only.
@@ -1409,9 +1528,9 @@ if (typeof module !== "undefined") {
     const wrap = el("div", {}, []);
     let info, itemLabel;
     if (state.activityKind === "likert") {
-      const count = LIKERT_PAIRS.length * 2 + BOGUS_ITEMS.length;
+      const count = LIKERT_ITEMS.length + BOGUS_ITEMS.length;
       info = { activity: LIKERT_ACTIVITY, number: ACTIVITIES.length + 2, total: ACTIVITIES.length + 2, count };
-      itemLabel = `${count} quick items`;
+      itemLabel = `${count} items`;
     } else if (state.activityKind === "aboutyou") {
       const count = 3 + VALUES_ITEMS.length + EQ_ITEMS.length;
       info = { activity: ABOUTYOU_ACTIVITY, number: ACTIVITIES.length + 1, total: ACTIVITIES.length + 2, count };
@@ -1697,7 +1816,7 @@ if (typeof module !== "undefined") {
       class: "btn", disabled: !allAnswered,
       onclick: () => {
         state.justFinishedActivityName = ABOUTYOU_ACTIVITY.name;
-        state.nextActivityPreview = `Next up: ${LIKERT_ACTIVITY.name} — a handful of agree/disagree items.`;
+        state.nextActivityPreview = `Next up: ${LIKERT_ACTIVITY.name} — a longer set of agree/disagree statements.`;
         state.activityKind = "likert";
         state.screen = "activityComplete";
         render();
@@ -1714,9 +1833,9 @@ if (typeof module !== "undefined") {
     wrap.appendChild(el("div", { class: "activity-kicker" }, [text(`Activity ${ACTIVITIES.length + 2} of ${ACTIVITIES.length + 2}`)]));
     wrap.appendChild(el("h2", { class: "section-title", style: "margin-top:4px;" }, [text(LIKERT_ACTIVITY.name)]));
 
-    const totalLikert = LIKERT_PAIRS.length * 2 + BOGUS_ITEMS.length;
+    const totalLikert = LIKERT_ITEMS.length + BOGUS_ITEMS.length;
     const answeredLikert =
-      LIKERT_PAIRS.reduce((s, p) => s + (state.likert[p.id]?.a ? 1 : 0) + (state.likert[p.id]?.b ? 1 : 0), 0) +
+      LIKERT_ITEMS.reduce((s, item) => s + (state.likert[item.id] ? 1 : 0), 0) +
       BOGUS_ITEMS.reduce((s, b) => s + (state.bogus[b.id] ? 1 : 0), 0);
     const likertPct = (answeredLikert / totalLikert) * 100;
     wrap.appendChild(el("div", { class: "progress-shell" }, [
@@ -1731,7 +1850,7 @@ if (typeof module !== "undefined") {
 
     wrap.appendChild(el("div", { class: "note-box" }, [text(
       "Rate how much you agree with each statement, 1 (Strongly Disagree) to 5 (Strongly Agree). " +
-      "These are used only to check response consistency, not for the trait score."
+      "Go with your first instinct — there's no trait score attached to any single statement here."
     )]));
 
     function likertRow(id, statementText, store) {
@@ -1753,23 +1872,30 @@ if (typeof module !== "undefined") {
       return item;
     }
 
-    wrap.appendChild(el("h3", { class: "sub-title" }, [text("Part A")]));
-    LIKERT_PAIRS.forEach((pair) => {
-      if (!state.likert[pair.id]) state.likert[pair.id] = { a: null, b: null };
-      const storeA = { get value() { return state.likert[pair.id].a; }, set value(v) { state.likert[pair.id].a = v; } };
-      const storeB = { get value() { return state.likert[pair.id].b; }, set value(v) { state.likert[pair.id].b = v; } };
-      wrap.appendChild(likertRow(pair.id + "a", pair.a, storeA));
-      wrap.appendChild(likertRow(pair.id + "b", pair.b, storeB));
+    // LIKERT_ITEMS is split into 5 equal, generically-labeled "Parts" purely for
+    // readability while scrolling — the grouping itself carries no meaning the
+    // candidate could use to guess which statements are paired for scoring.
+    const PART_LABELS = ["Part A", "Part B", "Part C", "Part D", "Part E"];
+    const perPart = Math.ceil(LIKERT_ITEMS.length / PART_LABELS.length);
+    PART_LABELS.forEach((label, pi) => {
+      const chunk = LIKERT_ITEMS.slice(pi * perPart, (pi + 1) * perPart);
+      if (!chunk.length) return;
+      wrap.appendChild(el("h3", { class: "sub-title" }, [text(label)]));
+      chunk.forEach((itemDef) => {
+        if (state.likert[itemDef.id] === undefined) state.likert[itemDef.id] = null;
+        const store = { get value() { return state.likert[itemDef.id]; }, set value(v) { state.likert[itemDef.id] = v; } };
+        wrap.appendChild(likertRow(itemDef.id, itemDef.text, store));
+      });
     });
 
-    wrap.appendChild(el("h3", { class: "sub-title" }, [text("Part B")]));
+    wrap.appendChild(el("h3", { class: "sub-title" }, [text("Part F")]));
     BOGUS_ITEMS.forEach((bg) => {
       if (state.bogus[bg.id] === undefined) state.bogus[bg.id] = null;
       const store = { get value() { return state.bogus[bg.id]; }, set value(v) { state.bogus[bg.id] = v; } };
       wrap.appendChild(likertRow(bg.id, bg.text, store));
     });
 
-    const allAnswered = LIKERT_PAIRS.every((p) => state.likert[p.id] && state.likert[p.id].a && state.likert[p.id].b)
+    const allAnswered = LIKERT_ITEMS.every((item) => state.likert[item.id])
       && BOGUS_ITEMS.every((b) => state.bogus[b.id]);
 
     const btnRow = el("div", {}, []);
@@ -1818,11 +1944,12 @@ if (typeof module !== "undefined") {
       const consistent = (prefA === 0 || prefB === 0) ? true : (Math.sign(prefA) === Math.sign(prefB));
       return { consistent };
     });
-    const likertPairsForValidity = LIKERT_PAIRS.map((p) => ({ a: state.likert[p.id].a, b: state.likert[p.id].b }));
+    const likertResponses = LIKERT_ITEMS.map((item) => ({ trait: item.trait, keyed: item.keyed, rating: state.likert[item.id] }));
+    const traitConsistency = traitLikertConsistency(likertResponses);
     const bogusRatings = BOGUS_ITEMS.map((b) => state.bogus[b.id]);
     const times = Object.values(state.quadTimes);
     const avgSec = times.length ? times.reduce((a, b) => a + b, 0) / times.length : 10;
-    const validity = validityIndex({ likertPairs: likertPairsForValidity, bogusRatings, reversalChecks, avgSecPerQuad: avgSec });
+    const validity = validityIndex({ traitConsistencyScore: traitConsistency.avgScore, bogusRatings, reversalChecks, avgSecPerQuad: avgSec });
 
     const { strengths, derailers } = strengthsAndDerailers(gaps, 15);
     const traitById = {};
@@ -1830,7 +1957,7 @@ if (typeof module !== "undefined") {
     const rankedTraits = TRAITS.map((t) => ({ ...t, z: z[t.id], weight: weights[t.id] }))
       .sort((a, b) => b.weight - a.weight);
 
-    return { z, effTier, weights, score, gaps, band, validity, strengths, derailers, traitById, rankedTraits };
+    return { z, effTier, weights, score, gaps, band, validity, traitConsistency, strengths, derailers, traitById, rankedTraits };
   }
 
   // ---------------- EMAIL-SAFE REPORT HTML (for the auto-emailed remote report) ----------------
@@ -1894,13 +2021,21 @@ if (typeof module !== "undefined") {
       ["Date", new Date().toLocaleDateString()],
     ]) + `</table>`;
 
+    if (validity.rating === "Invalid") {
+      html += `<div style="background:#FFEAEA;border:2px solid #D8000C;border-radius:8px;padding:14px 16px;margin-bottom:12px;">` +
+        `<div style="color:#D8000C;font-weight:800;font-size:14px;">⚠ LOW RESPONSE CONSISTENCY — DO NOT RELY ON THIS SCORE ALONE</div>` +
+        `<div style="color:#8a0009;font-size:12.5px;margin-top:4px;">This candidate's answers were highly inconsistent across the response-consistency check ` +
+        `(Response Consistency Score ${validity.index}/100). The Position Suitability Score below may not reflect this candidate accurately. ` +
+        `Recommend re-assessment before using this report for a hiring decision.</div></div>`;
+    }
+
     html += `<div style="background:${bandColor};color:#fff;border-radius:8px;padding:16px 18px;margin-bottom:10px;">` +
       `<div style="font-size:14px;opacity:.9;">Position Suitability Score</div>` +
       `<div style="font-size:34px;font-weight:800;">${Math.round(score)}%</div>` +
       `<div style="font-size:15px;font-weight:700;">Readiness Index: ${esc(band)}</div>` +
       `<div style="font-size:12.5px;margin-top:6px;">${esc(readinessAction(band))}</div></div>`;
 
-    html += `<div style="margin-bottom:6px;font-size:13px;"><b>Validity:</b> ${esc(validity.rating)} (Consistency Index ${validity.index}/100)`;
+    html += `<div style="margin-bottom:6px;font-size:13px;"><b>Validity:</b> ${esc(validity.rating)} (Response Consistency Score ${validity.index}/100)`;
     if (validity.flags.length) html += `<br/><span style="color:#B00020;">Flags: ${esc(validity.flags.join("; "))}</span>`;
     html += `</div>`;
     html += `<div style="font-size:11px;color:#889;margin-bottom:20px;">0 — Not Yet Ready &nbsp;|&nbsp; 70 — Onboarding Support &nbsp;|&nbsp; 85 — Ready Now &nbsp;|&nbsp; 100</div>`;
@@ -2120,6 +2255,7 @@ if (typeof module !== "undefined") {
       seniority_tier: tierLabel,
       suitability_score: Math.round(reportData.score) + "%",
       readiness_index: reportData.band,
+      validity_rating: reportData.validity.rating, // "Valid" | "Caution" | "Invalid" — usable in the flow's Subject if desired
       submitted_date: new Date().toLocaleString(),
       report_html: emailHtml,
     };
@@ -2216,6 +2352,18 @@ if (typeof module !== "undefined") {
     // --- scoring (shared with the remote/candidate auto-email path — see computeReportData) ---
     const { z, effTier, weights, score, gaps, band, validity, strengths, derailers, traitById, rankedTraits } = computeReportData();
 
+    if (validity.rating === "Invalid") {
+      wrap.appendChild(el("div", {
+        style: "background:#FFEAEA;border:2px solid #D8000C;border-radius:8px;padding:14px 16px;margin-bottom:16px;",
+      }, [
+        el("div", { style: "color:#D8000C;font-weight:800;font-size:14px;" }, [text("⚠ LOW RESPONSE CONSISTENCY — DO NOT RELY ON THIS SCORE ALONE")]),
+        el("div", { style: "color:#8a0009;font-size:12.5px;margin-top:4px;" }, [text(
+          `This candidate's answers were highly inconsistent across the response-consistency check (Response Consistency Score ${validity.index}/100). ` +
+          "The Position Suitability Score below may not reflect this candidate accurately. Recommend re-assessment before using this report for a hiring decision."
+        )]),
+      ]));
+    }
+
     // --- score hero ---
     const bandColor = band === "Ready Now" ? "#00BFA6" : band === "Ready with Onboarding Support" ? "#FFB236" : "#FF6B6B";
     const hero = el("div", { class: "score-hero" }, []);
@@ -2249,7 +2397,7 @@ if (typeof module !== "undefined") {
       el("div", { style: "margin:8px 0;" }, [
         el("span", { class: "badge " + validBadgeClass }, [text("Validity: " + validity.rating)]),
       ]),
-      el("div", { style: "font-size:12.5px;color:#555;" }, [text("Consistency Index: " + validity.index + "/100")]),
+      el("div", { style: "font-size:12.5px;color:#555;" }, [text("Response Consistency Score: " + validity.index + "/100")]),
     ]);
     hero.appendChild(validBlock);
     wrap.appendChild(hero);
